@@ -57,7 +57,7 @@ const PAGES = [
   ['dash','ภาพรวม'],['emp','พนักงาน'],['pos','ตำแหน่งงาน'],['ts','บันทึกเวลา'],['ocr','อัปรูปใบลงเวลา'],
   ['form','พิมพ์ใบลงเวลา'],['adj','ปรับเงิน'],['calc','คำนวณเงินเดือน'],['slips','สลิป'],['set','ตั้งค่าระบบ'],['log','บันทึกกิจกรรม']
 ];
-const S = { settings:{}, positions:[], employees:[], pending:0, ocrReady:false, ready:false };
+const S = { pin:'', pinSet:true, settings:{}, positions:[], employees:[], pending:0, ocrReady:false, ready:false };
 const $ = (s, el=document) => el.querySelector(s);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => Number(n||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -68,14 +68,35 @@ const monthRange = () => { const n=new Date(), y=n.getFullYear(), m=n.getMonth()
 const empName = id => (S.employees.find(e=>e.id===id)||{}).name || id;
 
 // ── เรียกเซิร์ฟเวอร์ผ่านตัวกลาง run() (คืน JSON string) ──
-function call(name, ...args){
+function rawCall(name, args){
   return new Promise((resolve, reject) => {
     google.script.run.withSuccessHandler(txt => {
       let r; try { r = JSON.parse(txt); } catch(e){ return reject(new Error('เซิร์ฟเวอร์ตอบกลับผิดรูปแบบ')); }
       r.ok ? resolve(r.data) : reject(new Error(r.error));
-    }).withFailureHandler(e => reject(new Error(e && e.message || 'เรียกเซิร์ฟเวอร์ไม่สำเร็จ'))).run(name, JSON.stringify(args));
+    }).withFailureHandler(e => reject(new Error(e && e.message || 'เรียกเซิร์ฟเวอร์ไม่สำเร็จ'))).run(name, JSON.stringify(args), S.pin);
   });
 }
+let loginP = null;
+async function call(name, ...args){
+  try { return await rawCall(name, args); }
+  catch(e){
+    if(!/^PIN_(REQUIRED|WRONG|LOCKED)/.test(e.message)) throw e;
+    if(!loginP) loginP = askPin(e.message.startsWith('PIN_REQUIRED') ? '' : e.message.replace(/^PIN_\w+:\s*/,'')).finally(()=>loginP=null);
+    await loginP; return call(name, ...args);
+  }
+}
+function askPin(errText){
+  return new Promise(resolve => {
+    const box = document.createElement('div');
+    box.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:99';
+    box.innerHTML = `<div class="card" style="width:min(340px,90vw)"><h2>ใส่รหัสผ่าน</h2>${errText?`<div class="msg err">${esc(errText)}</div>`:''}
+      <div class="row"><input id="pinIn" type="password" autocomplete="current-password" style="flex:1"><button class="pri" id="pinOk">เข้าสู่ระบบ</button></div></div>`;
+    document.body.appendChild(box);
+    const done = () => { S.pin = $('#pinIn').value; box.remove(); try{ sessionStorage.setItem('pin', S.pin); }catch(e){} resolve(); };
+    $('#pinOk').onclick = done; $('#pinIn').onkeydown = e => { if(e.key==='Enter') done(); }; $('#pinIn').focus();
+  });
+}
+try { S.pin = sessionStorage.getItem('pin') || ''; } catch(e){}
 function note(el, text, kind='info'){ let m=$('.msg',el); if(!m){ m=document.createElement('div'); el.prepend(m);} m.className='msg '+kind; m.textContent=text; }
 async function act(btn, host, fn, okText){
   const old = btn && btn.textContent; if(btn){ btn.disabled=true; btn.textContent='กำลังทำงาน…'; }
@@ -105,6 +126,7 @@ V.dash = async el => {
     <div><b>${S.pending}</b>ใบลงเวลารออนุมัติ</div><div><b>${slips.length}</b>สลิปเดือนนี้</div>
     <div><b>${money(slips.reduce((s,x)=>s+x.net,0))}</b>เงินสุทธิรวมที่ออกสลิปแล้ว</div>`;
   const hints = [];
+  if(!S.pinSet) hints.push('⚠ ยังไม่ได้ตั้งรหัสผ่านเข้าเว็บ — ใครมีลิงก์ก็เห็นเงินเดือนได้ ตั้ง Script Property ชื่อ APP_PIN');
   if(!S.settings.company_name_th) hints.push('ยังไม่ได้ตั้งชื่อบริษัท → ไปเมนู "ตั้งค่าระบบ"');
   if(!S.positions.length) hints.push('ยังไม่มีตำแหน่งงาน → เพิ่มค่าแรงต่อชั่วโมงที่เมนู "ตำแหน่งงาน"');
   if(!S.employees.length) hints.push('ยังไม่มีพนักงาน → เพิ่มที่เมนู "พนักงาน"');

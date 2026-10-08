@@ -55,9 +55,10 @@ function api_() { // สร้างตอนเรียก: ไฟล์ .gs �
 var API_READ_ = { apiBootstrap: 1, apiListTimesheets: 1, apiListAdjustments: 1, apiCalc: 1, apiListSlips: 1, apiGetSlip: 1, apiLog: 1 };
 
 /** ตัวกลางเดียวที่หน้าเว็บเรียก: คืน JSON string เสมอ (กัน google.script.run คืน null เมื่อมี Date) */
-function run(name, argsJson) {
+function run(name, argsJson, pin) {
   var lock = null;
   try {
+    checkPin_(pin);
     var API = api_();
     if (!API.hasOwnProperty(name)) throw new Error('ไม่รู้จักคำสั่ง: ' + name);
     var args = argsJson ? JSON.parse(argsJson) : [];
@@ -68,6 +69,21 @@ function run(name, argsJson) {
   } finally {
     if (lock) lock.releaseLock();
   }
+}
+
+/**
+ * รหัสผ่านเข้าเว็บ: ตั้ง Script Property APP_PIN (ไม่ตั้ง = เปิดโล่ง และหน้าภาพรวมจะเตือน)
+ * ผิดครบ 5 ครั้ง ล็อกทั้งระบบ 10 นาที (เว็บไม่ต้องล็อกอิน จึงนับรวมทุกคน)
+ */
+function checkPin_(pin) {
+  var want = PropertiesService.getScriptProperties().getProperty('APP_PIN');
+  if (!want) return;
+  var cache = CacheService.getScriptCache();
+  var fails = parseInt(cache.get('pinfail') || '0', 10);
+  if (fails >= 5) throw new Error('PIN_LOCKED: ใส่รหัสผิดหลายครั้ง รอ 10 นาทีแล้วลองใหม่');
+  if (!pin) throw new Error('PIN_REQUIRED');
+  if (!safeEq_(String(pin), want)) { cache.put('pinfail', String(fails + 1), 600); throw new Error('PIN_WRONG: รหัสผ่านไม่ถูกต้อง'); }
+  if (fails) cache.remove('pinfail');
 }
 
 /** รันครั้งเดียวโดยเจ้าของ: สร้างโฟลเดอร์ + สเปรดชีต + ชีตทั้งหมด (รันซ้ำได้ ไม่ทับข้อมูล) */
@@ -378,7 +394,8 @@ function apiBootstrap_() {
   return {
     settings: publicSettings_(), positions: rows_('Positions'), employees: rows_('Employees'),
     pending: rows_('Timesheets').filter(function (t) { return t.status === 'pending'; }).length,
-    ocrReady: geminiKeys_().length > 0
+    ocrReady: geminiKeys_().length > 0,
+    pinSet: !!PropertiesService.getScriptProperties().getProperty('APP_PIN')
   };
 }
 

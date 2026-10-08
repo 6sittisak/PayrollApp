@@ -32,7 +32,7 @@ function fakeSS() {
   };
 }
 
-const props = {}, files = {}; let ss = null, nid = 0;
+const props = {}, files = {}, cache = {}; let ss = null, nid = 0;
 const ctx = {
   console, Logger: { log() { } },
   Utilities: {
@@ -41,7 +41,7 @@ const ctx = {
     base64Encode: b => Buffer.from(b.map(x => x & 255)).toString('base64'), newBlob: (bytes, mime, name) => ({ bytes, mime, name }),
   },
   PropertiesService: { getScriptProperties: () => ({ getProperty: k => props[k] ?? null, setProperty: (k, v) => props[k] = v, deleteProperty: k => delete props[k] }) },
-  CacheService: { getScriptCache: () => ({ get: () => null, put() { } }) },
+  CacheService: { getScriptCache: () => ({ get: k => cache[k] ?? null, put: (k, v) => { cache[k] = v; }, remove: k => { delete cache[k]; } }) },
   LockService: { getScriptLock: () => ({ waitLock() { }, releaseLock() { } }) },
   UrlFetchApp: {}, ContentService: {}, HtmlService: {},
   SpreadsheetApp: { create: () => (ss = fakeSS()), openById: () => ss },
@@ -55,7 +55,7 @@ vm.createContext(ctx);
 for (const f of ['Code.gs', 'TimesheetOcr.gs']) vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), ctx, { filename: f });
 vm.runInContext('setup()', ctx);
 ctx.__args = null;
-const serverRun = (name, argsJson) => { ctx.__a = [name, argsJson]; return vm.runInContext('run.apply(null, __a)', ctx); };
+const serverRun = (name, argsJson, pin) => { ctx.__a = [name, argsJson, pin]; return vm.runInContext('run.apply(null, __a)', ctx); };
 
 let pass = 0, fail = 0;
 const check = (name, cond, extra) => { cond ? pass++ : (fail++, console.log('FAIL', name, extra || '')); };
@@ -71,7 +71,7 @@ const check = (name, cond, extra) => { cond ? pass++ : (fail++, console.log('FAI
   await page.addInitScript(() => {
     const mk = (ok, bad) => ({
       withSuccessHandler(f) { return mk(f, bad); }, withFailureHandler(f) { return mk(ok, f); },
-      run(n, a) { window.__serverRun(n, a).then(ok, e => bad && bad({ message: String(e) })); }
+      run(n, a, p) { window.__serverRun(n, a, p).then(ok, e => bad && bad({ message: String(e) })); }
     });
     window.google = { script: { run: mk() } };
   });
@@ -143,6 +143,26 @@ const check = (name, cond, extra) => { cond ? pass++ : (fail++, console.log('FAI
   check('มือถือไม่เลื่อนแนวนอนทั้งหน้า', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
   check('ไม่มี JS error ในคอนโซล', errors.length === 0, errors.join(' | '));
 
+  // 8) รหัสผ่านเข้าเว็บ
+  props.APP_PIN = 'secret-1234';
+  const js = (pin) => JSON.parse(serverRun('apiBootstrap', '[]', pin));
+  check('ไม่ส่งรหัส → PIN_REQUIRED', /^PIN_REQUIRED/.test(js(undefined).error));
+  check('รหัสผิด → PIN_WRONG', /^PIN_WRONG/.test(js('nope').error));
+  check('รหัสถูก → เข้าได้', js('secret-1234').ok === true);
+  for (let i = 0; i < 5; i++) js('bad');
+  check('ผิดครบ 5 ครั้ง → ล็อก แม้ใส่รหัสถูก', /^PIN_LOCKED/.test(js('secret-1234').error));
+  delete cache.pinfail;
+  await page.evaluate(() => sessionStorage.clear());
+  await page.goto('file://' + path.join(root, 'Index.html'));
+  await page.waitForSelector('#pinIn');
+  check('เปิดเว็บแล้วเจอหน้าใส่รหัสผ่าน ไม่เห็นข้อมูล', !(await page.textContent('body')).includes('สมชาย'));
+  await page.fill('#pinIn', 'wrong'); await page.press('#pinIn', 'Enter');
+  await page.waitForSelector('.msg.err:has-text("ไม่ถูกต้อง")');
+  await page.fill('#pinIn', 'secret-1234'); await page.press('#pinIn', 'Enter');
+  await page.waitForSelector('text=ภาพรวม >> nth=1');
+  await page.waitForSelector('.stat');
+  check('ใส่รหัสถูกแล้วเข้าหน้าภาพรวมได้', await page.isVisible('.stat'));
+  errors.length = 0;
   await browser.close();
   console.log(`\n${fail ? 'FAIL' : 'PASS'} ${pass}/${pass + fail}`);
   process.exit(fail ? 1 : 0);

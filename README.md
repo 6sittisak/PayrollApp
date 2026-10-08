@@ -14,9 +14,13 @@
 | `Index.html` | หน้าเว็บทั้งระบบ (11 เมนู) |
 | `appsscript.json` | manifest (Bangkok, V8, เปิดไม่ต้องล็อกอิน, รันสิทธิ์เจ้าของ) |
 | `tests/test-core.js` | สูตรคำนวณ + การเรียก Gemini + ความปลอดภัยของ dispatcher |
-| `tests/ui-smoke.js` | หน้าเว็บ + Code.gs จริง ในเบราว์เซอร์ (Playwright) |
+| `tests/ui-smoke.js` | หน้าเว็บ + Code.gs จริง ในเบราว์เซอร์ (Playwright) 19 จุด รวมรหัสผ่าน |
 
 ## ติดตั้ง
+ไม่อยากใช้ clasp → ดู [INSTALL.md](INSTALL.md) (ก๊อปวางในเบราว์เซอร์)
+
+**ตั้ง Script Property `APP_PIN` ทุกครั้ง** — เว็บเปิดแบบไม่ต้องล็อกอิน ถ้าไม่ตั้งใครมีลิงก์ก็เห็นเงินเดือนได้ (ผิด 5 ครั้งล็อก 10 นาทีทั้งระบบ)
+
 ```bash
 node tests/test-core.js                      # ต้อง PASS
 cp appsscript.json appsscript.json.bak       # create-script เขียนทับ manifest
